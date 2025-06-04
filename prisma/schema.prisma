@@ -1,0 +1,509 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  passwordHash  String    @map("password_hash")
+  username      String?
+  avatar        String?
+  status        UserStatus @default(PENDING)
+  emailVerified Boolean   @default(false) @map("email_verified")
+  lastLoginAt   DateTime? @map("last_login_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  
+  // Relations
+  userGroups      UserGroup[]
+  userRoles       UserRole[]
+  chatSessions    ChatSession[]
+  auditLogs       AuditLog[]
+  messageFeedback MessageFeedback[]
+  ragSets         RagSet[]
+  ragDocuments    RagDocument[]
+  ragVersions     RagVersion[]
+  
+  @@map("llm_users")
+}
+
+model Group {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  purpose     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  userGroups     UserGroup[]
+  groupPermissions GroupPermission[]
+  llmAgentAccess LLMAgentAccess[]
+  ragPermissions  RagPermission[]
+  navigationAccess NavigationAccess[]
+  
+  @@map("llm_groups")
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+  
+  @@map("llm_roles")
+}
+
+model Permission {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  resource    String
+  action      String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relations
+  rolePermissions  RolePermission[]
+  groupPermissions GroupPermission[]
+  
+  @@map("llm_permissions")
+}
+
+// Junction Tables
+model UserGroup {
+  id      String @id @default(cuid())
+  userId  String
+  groupId String
+  
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group   Group  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, groupId])
+  @@map("llm_user_groups")
+}
+
+model UserRole {
+  id     String @id @default(cuid())
+  userId String
+  roleId String
+  
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, roleId])
+  @@map("user_roles")
+}
+
+model RolePermission {
+  id           String @id @default(cuid())
+  roleId       String
+  permissionId String
+  
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  
+  @@unique([roleId, permissionId])
+  @@map("llm_role_permissions")
+}
+
+model GroupPermission {
+  id           String @id @default(cuid())
+  groupId      String
+  permissionId String
+  
+  group        Group      @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  
+  @@unique([groupId, permissionId])
+  @@map("group_permissions")
+}
+
+// LLM Agent Related Models
+model Agent {
+  id           String        @id @default(cuid())
+  name         String
+  description  String?
+  model        String
+  version      String
+  status       AgentStatus   @default(INACTIVE)
+  configuration Json?
+  endpoint     String?
+  apiKey       String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  
+  // Relations
+  chatSessions     ChatSession[]
+  agentAccess      LLMAgentAccess[]
+  monitoringData   MonitoringData[]
+  
+  @@map("llm_agents")
+}
+
+// RAG 관리 모델들
+model RagSet {
+  id               String    @id @default(cuid())
+  name             String    @unique
+  description      String?
+  status           RagStatus @default(ACTIVE)
+  embeddingModel   String    @default("all-MiniLM-L6-v2")
+  chunkingStrategy Json?     // 청킹 전략 설정
+  preprocessingRules Json?   // 전처리 규칙
+  metadata         Json?     // 추가 메타데이터
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  createdBy        String
+  
+  // 관계
+  creator         User      @relation(fields: [createdBy], references: [id])
+  ragPermissions  RagPermission[]
+  ragDocuments    RagDocument[]
+  ragVersions     RagVersion[]
+  chatSessions    ChatSession[]
+  ragAnalytics    RagAnalytic[]
+  dataSources     ExternalDataSource[]
+  
+  @@map("rag_sets")
+}
+
+// RAG Set 권한 관리
+model RagPermission {
+  id      String @id @default(cuid())
+  ragSetId String
+  groupId String
+  
+  ragSet  RagSet @relation(fields: [ragSetId], references: [id], onDelete: Cascade)
+  group   Group  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  
+  @@unique([ragSetId, groupId])
+  @@map("rag_permissions")
+}
+
+// RAG 문서 관리
+model RagDocument {
+  id              String          @id @default(cuid())
+  ragSetId        String
+  filename        String
+  originalName    String
+  filePath        String
+  fileSize        Int
+  fileType        String
+  status          DocumentStatus  @default(UPLOADED)
+  processingError String?
+  metadata        Json?
+  vectorized      Boolean         @default(false)
+  vectorCount     Int?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  uploadedBy      String
+  
+  // 관계
+  ragSet          RagSet          @relation(fields: [ragSetId], references: [id], onDelete: Cascade)
+  uploader        User            @relation(fields: [uploadedBy], references: [id])
+  ragChunks       RagChunk[]
+  
+  @@map("rag_documents")
+}
+
+// RAG 문서 청크 (벡터화된 조각)
+model RagChunk {
+  id          String      @id @default(cuid())
+  documentId  String
+  chunkIndex  Int
+  content     String      @db.LongText
+  embedding   Json?       // 벡터 데이터
+  metadata    Json?
+  tokens      Int?
+  createdAt   DateTime    @default(now())
+  
+  // 관계
+  document    RagDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  
+  @@unique([documentId, chunkIndex])
+  @@map("rag_chunks")
+}
+
+// RAG 버전 관리
+model RagVersion {
+  id              String    @id @default(cuid())
+  ragSetId        String
+  version         String
+  description     String?
+  snapshotPath    String?   // 버전 스냅샷 저장 경로
+  documentCount   Int       @default(0)
+  vectorCount     Int       @default(0)
+  createdAt       DateTime  @default(now())
+  createdBy       String
+  
+  // 관계
+  ragSet          RagSet    @relation(fields: [ragSetId], references: [id], onDelete: Cascade)
+  creator         User      @relation(fields: [createdBy], references: [id])
+  
+  @@unique([ragSetId, version])
+  @@map("rag_versions")
+}
+
+// RAG 성능 분석
+model RagAnalytic {
+  id              String    @id @default(cuid())
+  ragSetId        String
+  metric          String    // accuracy, latency, recall, etc.
+  value           Float
+  testQuery       String?
+  testResult      Json?
+  measurementDate DateTime  @default(now())
+  
+  // 관계
+  ragSet          RagSet    @relation(fields: [ragSetId], references: [id], onDelete: Cascade)
+  
+  @@map("rag_analytics")
+}
+
+// 외부 데이터 소스 연동
+model ExternalDataSource {
+  id          String              @id @default(cuid())
+  ragSetId    String
+  type        DataSourceType
+  config      Json                // 연동 설정 (API키, URL 등)
+  schedule    Json?               // 스케줄링 설정
+  lastSync    DateTime?
+  status      DataSourceStatus    @default(INACTIVE)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  
+  // 관계
+  ragSet      RagSet              @relation(fields: [ragSetId], references: [id], onDelete: Cascade)
+  syncLogs    DataSourceSyncLog[]
+  
+  @@map("external_data_sources")
+}
+
+// 외부 데이터 소스 동기화 로그
+model DataSourceSyncLog {
+  id              String              @id @default(cuid())
+  dataSourceId    String
+  status          SyncStatus
+  documentsAdded  Int                 @default(0)
+  documentsUpdated Int                @default(0)
+  documentsDeleted Int                @default(0)
+  errorMessage    String?
+  startedAt       DateTime            @default(now())
+  completedAt     DateTime?
+  
+  // 관계
+  dataSource      ExternalDataSource  @relation(fields: [dataSourceId], references: [id], onDelete: Cascade)
+  
+  @@map("data_source_sync_logs")
+}
+
+// 채팅 세션 관리
+model ChatSession {
+  id          String    @id @default(cuid())
+  userId      String
+  agentId     String?
+  ragSetId    String?
+  title       String?
+  summary     String?
+  language    String    @default("ko")
+  isFavorite  Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  // 관계
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  agent       Agent?    @relation(fields: [agentId], references: [id], onDelete: SetNull)
+  ragSet      RagSet?   @relation(fields: [ragSetId], references: [id], onDelete: SetNull)
+  messages    ChatMessage[]
+  
+  @@map("chat_sessions")
+}
+
+// 채팅 메시지
+model ChatMessage {
+  id              String      @id @default(cuid())
+  sessionId       String
+  role            MessageRole
+  content         String      @db.LongText
+  metadata        Json?       // 참조 문서, 검색 결과 등
+  referencedDocs  Json?       // 참조된 문서 정보
+  createdAt       DateTime    @default(now())
+  
+  // 관계
+  session         ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  feedback        MessageFeedback?
+  ragReferences   RAGReference[]
+  
+  @@map("chat_messages")
+}
+
+model MessageFeedback {
+  id        String         @id @default(cuid())
+  messageId String         @unique
+  userId    String
+  rating    FeedbackRating
+  comment   String?
+  createdAt DateTime       @default(now())
+  
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  message   ChatMessage    @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  
+  @@map("message_feedback")
+}
+
+model RAGReference {
+  id          String   @id @default(cuid())
+  messageId   String
+  ragSetId    String
+  documentId  String
+  chunkId     String?
+  relevance   Float
+  snippet     String   @db.Text
+  
+  message     ChatMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  
+  @@map("rag_references")
+}
+
+// Access Control Models
+model LLMAgentAccess {
+  id       String   @id @default(cuid())
+  groupId  String
+  agentId  String
+  
+  group    Group    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  agent    Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  
+  @@unique([groupId, agentId])
+  @@map("llm_agent_access")
+}
+
+model NavigationAccess {
+  id          String @id @default(cuid())
+  groupId     String
+  menuId      String
+  menuPath    String
+  
+  group       Group  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  
+  @@unique([groupId, menuId])
+  @@map("navigation_access")
+}
+
+// Monitoring and Audit
+model MonitoringData {
+  id              String   @id @default(cuid())
+  agentId         String
+  timestamp       DateTime @default(now())
+  requestCount    Int
+  averageLatency  Float
+  errorRate       Float
+  systemLoad      Json?
+  
+  agent           Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  
+  @@map("monitoring_data")
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  userId      String
+  action      String
+  resource    String
+  details     Json?
+  ipAddress   String?
+  userAgent   String?
+  timestamp   DateTime @default(now())
+  
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("audit_logs")
+}
+
+model SystemSettings {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String   @db.LongText
+  description String?
+  category    String?
+  isPublic    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  @@map("system_settings")
+}
+
+// Enums
+enum UserStatus {
+  PENDING
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum AgentStatus {
+  ACTIVE
+  INACTIVE
+  MAINTENANCE
+  ERROR
+}
+
+enum RagStatus {
+  ACTIVE
+  INACTIVE
+  PROCESSING
+  ERROR
+}
+
+enum DocumentStatus {
+  UPLOADED
+  PROCESSING
+  VECTORIZED
+  ERROR
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+enum FeedbackRating {
+  POSITIVE
+  NEGATIVE
+}
+
+enum DataSourceType {
+  CONFLUENCE
+  SHAREPOINT
+  NOTION
+  GOOGLE_DRIVE
+  WEB_CRAWLER
+  FTP
+  API
+}
+
+enum DataSourceStatus {
+  ACTIVE
+  INACTIVE
+  ERROR
+}
+
+enum SyncStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+} 
